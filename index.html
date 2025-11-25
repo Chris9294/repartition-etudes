@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Répartition des études</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<!-- PWA meta -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Répartition des études">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+
+<style>
+body { font-family: "Segoe UI", Roboto, Arial, sans-serif; padding:15px; background: linear-gradient(160deg,#f0f4ff,#fff); color:#333;}
+h1 { text-align:center; font-size:36px; margin-bottom:5px; color:#1a237e; font-weight:900; letter-spacing:1px;}
+#date { text-align:center; font-size:18px; color:#0d47a1; font-weight:bold; margin-bottom:20px;}
+.panel { background:#fff; border-radius:14px; padding:20px; box-shadow:0 6px 20px rgba(0,0,0,0.08); margin-bottom:20px;}
+input { width:70px; padding:6px; font-size:14px; }
+select { padding:6px; font-size:14px; }
+.class-row { display:flex; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
+.class-row label { width:40%; min-width:120px; margin-bottom:4px;}
+.class-row input { margin-right:10px; }
+.result { background:#fff; padding:20px; border-radius:14px; box-shadow:0 6px 20px rgba(0,0,0,0.08);}
+.study-block { padding:16px; border-radius:12px; margin-bottom:16px; color:white; font-weight:600; font-size:15px; box-shadow:0 3px 8px rgba(0,0,0,0.1); word-wrap:break-word;}
+.green { background:#8bc34a; }  /* vert pastel */
+.orange { background:#fb8c00; }
+.red { background:#e53935; }
+.blue { background:#1e88e5; }
+button { padding:12px 20px; background:#1e88e5; color:white; border:none; border-radius:8px; cursor:pointer; font-size:16px; margin:5px 0; width:100%; transition:0.2s;}
+button:hover { background:#1565c0; }
+@media (min-width:500px) { .class-row label { width:180px;} button { width:auto; margin-right:10px;} }
+</style>
+</head>
+<body>
+
+<h1>Répartition des études</h1>
+<div id="date"></div>
+
+<script>
+function updateDate() {
+    const now = new Date();
+    const options = { weekday:"long", year:"numeric", month:"long", day:"numeric" };
+    const formatted = now.toLocaleDateString("fr-FR", options);
+    document.getElementById("date").textContent = formatted.charAt(0).toUpperCase() + formatted.slice(1);
+}
+updateDate();
+</script>
+
+<div class="panel">
+    <label><strong>Nombre d'études :</strong>
+        <select id="studies" onchange="refreshStudySelectors()">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3" selected>3</option>
+            <option value="4">4</option>
+        </select>
+    </label>
+
+    <p><strong>Renseignez les effectifs et choisissez si une classe doit être obligatoirement placée dans une étude.</strong></p>
+    <div id="classes"></div>
+
+    <br>
+    <button onclick="compute()">Générer la répartition</button>
+    <button onclick="exportPDF()">Exporter en PDF</button>
+</div>
+
+<div id="result" class="result"></div>
+
+<script>
+const classNames = [
+    "CPA","CPB","CP/CE2","CE1A","CE1B","CE1/CM1","CE1/CM2",
+    "CE2A","CE2B","CM1A","CM1B","CM2A","CM2B"
+];
+
+const classesDiv = document.getElementById("classes");
+classNames.forEach((name,i)=>{
+    classesDiv.innerHTML += `
+    <div class="class-row">
+        <label>${name}</label>
+        <input type="number" id="class${i}" min="0" value="0">
+        <select id="force${i}">
+            <option value="auto">Auto</option>
+            <option value="1">Étude 1</option>
+            <option value="2">Étude 2</option>
+            <option value="3">Étude 3</option>
+            <option value="4">Étude 4</option>
+        </select>
+    </div>`;
+});
+
+function refreshStudySelectors() {
+    const studyCount = parseInt(document.getElementById("studies").value);
+    classNames.forEach((_, i) => {
+        const select = document.getElementById("force" + i);
+        [...select.options].forEach(opt=>{
+            if(opt.value!=="auto" && opt.value>studyCount) opt.remove();
+        });
+        for(let s=1;s<=studyCount;s++){
+            if(!select.querySelector(`option[value="${s}"]`)){
+                select.innerHTML += `<option value="${s}">Étude ${s}</option>`;
+            }
+        }
+    });
+}
+
+let lastStudies=[], lastTotal=0, lastMoyenne=0, lastDateText=document.getElementById("date").textContent;
+
+function compute(){
+    let classSizes=[], totalEleves=0, studyCount=parseInt(document.getElementById("studies").value);
+    classNames.forEach((name,i)=>{
+        const size=parseInt(document.getElementById("class"+i).value||0);
+        const forced=document.getElementById("force"+i).value;
+        classSizes.push({name,size,forced});
+        totalEleves+=size;
+    });
+
+    let studies=Array.from({length:studyCount},()=>({total:0,classes:[]}));
+
+    // Classes forcées uniquement si size>0
+    classSizes.forEach(cl=>{
+        if(cl.size > 0 && cl.forced!=="auto"){
+            let idx=parseInt(cl.forced)-1;
+            studies[idx].total+=cl.size;
+            studies[idx].classes.push({name: cl.name, size: cl.size});
+        }
+    });
+
+    // Répartition automatique
+    const freeClasses=classSizes.filter(c=>c.forced==="auto" && c.size>0).sort((a,b)=>b.size-a.size);
+    freeClasses.forEach(cl=>{
+        let bestStudy=studies.reduce((a,b)=>a.total<b.total?a:b);
+        bestStudy.total+=cl.size;
+        bestStudy.classes.push({name: cl.name, size: cl.size});
+    });
+
+    const moyenne=totalEleves/studyCount;
+    lastStudies=studies; lastTotal=totalEleves; lastMoyenne=moyenne; lastDateText=document.getElementById("date").textContent;
+
+    // Affichage : filtrer études à 0 et ordonner classes CP->CM2
+    let html=`<h3>Total élèves : <strong>${totalEleves}</strong></h3>`;
+    html+=`<h3>Moyenne : <strong>${moyenne.toFixed(1)}</strong> élèves par étude</h3><br>`;
+    html+=`<h3><u>Répartition proposée :</u></h3>`;
+
+    const order = ["CPA","CPB","CP/CE2","CE1A","CE1B","CE1/CM1","CE1/CM2",
+                   "CE2A","CE2B","CM1A","CM1B","CM2A","CM2B"];
+
+    studies.filter(study=>study.total>0).forEach((study,i)=>{
+        let colorClass="green";
+        const diff = study.total - moyenne;
+        if(diff>12) colorClass="red";
+        else if(diff>5) colorClass="orange";
+
+        const sortedClasses = study.classes
+            .sort((a,b)=> order.indexOf(a.name) - order.indexOf(b.name))
+            .map(c=>`${c.name} (${c.size})`);
+
+        html+=`<div class="study-block ${colorClass}">
+                Étude ${i+1} — <strong>${study.total}</strong> élèves<br>
+                ${sortedClasses.join(", ")}
+            </div>`;
+    });
+
+    document.getElementById("result").innerHTML=html;
+}
+
+function exportPDF(){
+    const {jsPDF}=window.jspdf;
+    const doc=new jsPDF();
+    let y=15;
+
+    doc.setFontSize(18);
+    doc.text("Répartition des études",10,y); y+=10;
+
+    doc.setFontSize(12);
+    doc.setFont("helvetica","bold");
+    doc.text(`Date : ${lastDateText}`,10,y); y+=7;
+
+    doc.setFont("helvetica","normal");
+    doc.text(`Total élèves : ${lastTotal}`,10,y); y+=7;
+    doc.text(`Moyenne par étude : ${lastMoyenne.toFixed(1)}`,10,y); y+=10;
+
+    const order = ["CPA","CPB","CP/CE2","CE1A","CE1B","CE1/CM1","CE1/CM2",
+                   "CE2A","CE2B","CM1A","CM1B","CM2A","CM2B"];
+
+    lastStudies.filter(study=>study.total>0).forEach((study,i)=>{
+        doc.setFontSize(14); doc.text(`Étude ${i+1} — ${study.total} élèves`,10,y); y+=7;
+        doc.setFontSize(11);
+        const sortedClasses = study.classes.sort((a,b)=> order.indexOf(a.name) - order.indexOf(b.name));
+        sortedClasses.forEach(cl=>{
+            doc.text("• "+cl.name+` (${cl.size})`,14,y); y+=6;
+            if(y>280){ doc.addPage(); y=15; }
+        });
+        y+=4;
+    });
+
+    doc.save("repartition_etudes.pdf");
+}
+
+// Enregistrement service worker
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js")
+    .then(() => console.log("Service Worker enregistré !"))
+    .catch(err => console.error("Erreur Service Worker :", err));
+}
+</script>
+
+</body>
+</html>

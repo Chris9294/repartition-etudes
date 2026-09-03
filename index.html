@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Répartition des études</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+<!-- PWA meta -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Répartition des études">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+
+<style>
+body { font-family: "Segoe UI", Roboto, Arial, sans-serif; padding:15px; background: linear-gradient(160deg,#f0f4ff,#fff); color:#333;}
+h1 { text-align:center; font-size:36px; margin-bottom:5px; color:#1a237e; font-weight:900; letter-spacing:1px;}
+#date { text-align:center; font-size:18px; color:#0d47a1; font-weight:bold; margin-bottom:20px;}
+.panel { background:#fff; border-radius:14px; padding:20px; box-shadow:0 6px 20px rgba(0,0,0,0.08); margin-bottom:20px;}
+input { width:70px; padding:6px; font-size:14px; }
+select { padding:6px; font-size:14px; }
+.class-row { display:flex; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
+.class-row label { width:40%; min-width:120px; margin-bottom:4px;}
+.class-row input { margin-right:10px; }
+.result { background:#fff; padding:20px; border-radius:14px; box-shadow:0 6px 20px rgba(0,0,0,0.08);}
+.study-block { padding:16px; border-radius:12px; margin-bottom:16px; color:white; font-weight:600; font-size:15px; box-shadow:0 3px 8px rgba(0,0,0,0.1); word-wrap:break-word;}
+.green { background:#8bc34a; }  /* vert pastel */
+.orange { background:#fb8c00; }
+.red { background:#e53935; }
+.blue { background:#1e88e5; }
+button { padding:12px 20px; background:#1e88e5; color:white; border:none; border-radius:8px; cursor:pointer; font-size:16px; margin:5px 0; width:100%; transition:0.2s;}
+button:hover { background:#1565c0; }
+@media (min-width:500px) { .class-row label { width:180px;} button { width:auto; margin-right:10px;} }
+</style>
+</head>
+<body>
+
+<h1>Répartition des études</h1>
+<div id="date"></div>
+
+<script>
+function updateDate() {
+    const now = new Date();
+    const options = { weekday:"long", year:"numeric", month:"long", day:"numeric" };
+    const formatted = now.toLocaleDateString("fr-FR", options);
+    document.getElementById("date").textContent = formatted.charAt(0).toUpperCase() + formatted.slice(1);
+}
+updateDate();
+</script>
+
+<div class="panel">
+    <label><strong>Nombre d'études :</strong>
+        <select id="studies" onchange="refreshStudySelectors()">
+            <option value="1">1</option>
+    <option value="2">2</option>
+    <option value="3">3</option>
+    <option value="4" selected>4</option>
+        </select>
+    </label>
+
+    <p><strong>Renseignez les effectifs et choisissez si une classe doit être obligatoirement placée dans une étude.</strong></p>
+    <div id="classes"></div>
+
+    <br>
+    <button onclick="compute()">Générer la répartition</button>
+    <button onclick="exportPDF()">Exporter en PDF</button>
+</div>
+
+<div id="result" class="result"></div>
+
+<script>
+const classNames = [
+    "CPA","CPB","CPC","CE1A","CE1B","CE1/CM1",
+    "CE2A","CE2B","CE2C","CM1A","CM1B","CM2A","CM2B"
+];
+
+const classesDiv = document.getElementById("classes");
+classNames.forEach((name,i)=>{
+    classesDiv.innerHTML += `
+    <div class="class-row">
+        <label>${name}</label>
+        <input type="number" id="class${i}" min="0" value="0">
+        <select id="force${i}">
+            <option value="auto">Auto</option>
+            <option value="1">Étude 1</option>
+            <option value="2">Étude 2</option>
+            <option value="3">Étude 3</option>
+            <option value="4">Étude 4</option>
+        </select>
+    </div>`;
+});
+
+function refreshStudySelectors() {
+    const studyCount = parseInt(document.getElementById("studies").value);
+    classNames.forEach((_, i) => {
+        const select = document.getElementById("force" + i);
+        [...select.options].forEach(opt=>{
+            if(opt.value!=="auto" && opt.value>studyCount) opt.remove();
+        });
+        for(let s=1;s<=studyCount;s++){
+            if(!select.querySelector(`option[value="${s}"]`)){
+                select.innerHTML += `<option value="${s}">Étude ${s}</option>`;
+            }
+        }
+    });
+}
+
+let lastStudies=[], lastTotal=0, lastMoyenne=0, lastDateText=document.getElementById("date").textContent;
+
+function compute(){
+      let classSizes=[], totalEleves=0, studyCount=parseInt(document.getElementById("studies").value);
+      classNames.forEach((name,i)=>{
+          const size=parseInt(document.getElementById("class"+i).value||0);
+          const forced=document.getElementById("force"+i).value;
+          classSizes.push({name,size,forced}); totalEleves+=size;
+      });
+
+      const order=["CPA","CPB","CPC","CE1A","CE1B","CE1/CM1","CE2A","CE2B","CE2C","CM1A","CM1B","CM2A","CM2B"];
+      const grades=name=>{ const g=[]; if(name.startsWith("CP"))g.push("CP"); if(name.includes("CE1"))g.push("CE1"); if(name.includes("CE2"))g.push("CE2"); if(name.includes("CM1"))g.push("CM1"); if(name.includes("CM2"))g.push("CM2"); return g; };
+      const active=classSizes.map((c,i)=>({...c,index:i})).filter(c=>c.size>0);
+      const forcedMasks=Array(studyCount).fill(0), free=[];
+      active.forEach(c=>{ if(c.forced!=="auto"){ const s=parseInt(c.forced)-1; if(s>=0&&s<studyCount) forcedMasks[s]|=1<<c.index; } else free.push(c); });
+
+      // Optimisation globale par programmation dynamique.
+      // Priorité 1 : minimiser les doublons de niveau.
+      // Priorité 2 : minimiser la dispersion des effectifs.
+      const n=free.length, N=1<<n, fullN=1<<classNames.length;
+      const expand=new Array(N).fill(0), totalFree=new Array(N).fill(0);
+      for(let m=1;m<N;m++){ const b=m&-m, j=Math.log2(b), prev=m^b; expand[m]=expand[prev]|(1<<free[j].index); totalFree[m]=totalFree[prev]+free[j].size; }
+      const totals=new Array(fullN).fill(0), dup=new Array(fullN).fill(0);
+      const gradeCounts=Array.from({length:fullN},()=>[0,0,0,0,0]);
+      const gb={CP:0,CE1:1,CE2:2,CM1:3,CM2:4};
+      for(let m=1;m<fullN;m++){
+          const b=m&-m, i=Math.log2(b), prev=m^b;
+          totals[m]=totals[prev]+classSizes[i].size;
+          gradeCounts[m]=gradeCounts[prev].slice();
+          grades(classNames[i]).forEach(g=>gradeCounts[m][gb[g]]++);
+          dup[m]=gradeCounts[m].reduce((sum,c)=>sum+Math.max(0,c-1),0);
+      }
+      const better=(a,b)=>!b||a.d<b.d||(a.d===b.d&&a.q<b.q);
+      let dp=new Array(N).fill(null); dp[0]={d:0,q:0}; const parents=[];
+      for(let s=0;s<studyCount;s++){
+          const next=new Array(N).fill(null), parent=new Array(N).fill(null);
+          for(let assigned=0;assigned<N;assigned++) if(dp[assigned]){
+              const remaining=(N-1)^assigned;
+              for(let sub=remaining;;sub=(sub-1)&remaining){
+                  const mask=forcedMasks[s]|expand[sub], cand={d:dp[assigned].d+dup[mask],q:dp[assigned].q+totals[mask]*totals[mask]}, dest=assigned|sub;
+                  if(better(cand,next[dest])){next[dest]=cand;parent[dest]={prev:assigned,sub};}
+                  if(sub===0)break;
+              }
+          }
+          dp=next; parents.push(parent);
+      }
+      const chosen=Array(studyCount).fill(0); let cur=N-1;
+      for(let s=studyCount-1;s>=0;s--){const p=parents[s][cur]; chosen[s]=p?p.sub:0; cur=p?p.prev:0;}
+
+      let studies=Array.from({length:studyCount},()=>({total:0,classes:[]}));
+      for(let s=0;s<studyCount;s++) active.forEach(c=>{if(c.forced!=="auto"&&parseInt(c.forced)-1===s){studies[s].total+=c.size;studies[s].classes.push({name:c.name,size:c.size});}});
+      for(let s=0;s<studyCount;s++) for(let j=0;j<n;j++) if(chosen[s]&(1<<j)){const c=free[j];studies[s].total+=c.size;studies[s].classes.push({name:c.name,size:c.size});}
+
+      const moyenne=totalEleves/studyCount;
+      lastStudies=studies; lastTotal=totalEleves; lastMoyenne=moyenne; lastDateText=document.getElementById("date").textContent;
+      let html=`<h3>Total élèves : <strong>${totalEleves}</strong></h3>`;
+      html+=`<h3>Moyenne : <strong>${moyenne.toFixed(1)}</strong> élèves par étude</h3><br>`;
+      html+=`<h3><u>Répartition proposée :</u></h3>`;
+      studies.filter(study=>study.total>0).forEach((study,i)=>{
+          let colorClass="green"; const diff=study.total-moyenne; if(diff>12)colorClass="red"; else if(diff>5)colorClass="orange";
+          const sortedClasses=study.classes.sort((a,b)=>order.indexOf(a.name)-order.indexOf(b.name)).map(c=>`${c.name} (${c.size})`);
+          html+=`<div class="study-block ${colorClass}">Étude ${i+1} — <strong>${study.total}</strong> élèves<br>${sortedClasses.join(", ")}</div>`;
+      });
+      document.getElementById("result").innerHTML=html;
+  }
+
+  function exportPDF(){
+    const {jsPDF}=window.jspdf;
+    const doc=new jsPDF();
+    let y=15;
+
+    doc.setFontSize(18);
+    doc.text("Répartition des études",10,y); y+=10;
+
+    doc.setFontSize(12);
+    doc.setFont("helvetica","bold");
+    doc.text(`Date : ${lastDateText}`,10,y); y+=7;
+
+    doc.setFont("helvetica","normal");
+    doc.text(`Total élèves : ${lastTotal}`,10,y); y+=7;
+    doc.text(`Moyenne par étude : ${lastMoyenne.toFixed(1)}`,10,y); y+=10;
+
+    const order = ["CPA","CPB","CP/CE2","CE1A","CE1B","CE1/CM1","CE1/CM2",
+                   "CE2A","CE2B","CM1A","CM1B","CM2A","CM2B"];
+
+    lastStudies.filter(study=>study.total>0).forEach((study,i)=>{
+        doc.setFontSize(14); doc.text(`Étude ${i+1} — ${study.total} élèves`,10,y); y+=7;
+        doc.setFontSize(11);
+        const sortedClasses = study.classes.sort((a,b)=> order.indexOf(a.name) - order.indexOf(b.name));
+        sortedClasses.forEach(cl=>{
+            doc.text("• "+cl.name+` (${cl.size})`,14,y); y+=6;
+            if(y>280){ doc.addPage(); y=15; }
+        });
+        y+=4;
+    });
+
+    doc.save("repartition_etudes.pdf");
+}
+
+// Enregistrement service worker
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js")
+    .then(() => console.log("Service Worker enregistré !"))
+    .catch(err => console.error("Erreur Service Worker :", err));
+}
+</script>
+
+</body>
+</html>

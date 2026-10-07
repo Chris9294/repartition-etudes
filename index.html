@@ -31,11 +31,36 @@ select { padding:6px; font-size:14px; }
 .blue { background:#1e88e5; }
 button { padding:12px 20px; background:#1e88e5; color:white; border:none; border-radius:8px; cursor:pointer; font-size:16px; margin:5px 0; width:100%; transition:0.2s;}
 button:hover { background:#1565c0; }
+.school-name { text-align:center; font-size:18px; color:#0d47a1; font-weight:bold; margin-bottom:2px; }
+.settings-button { position:fixed; top:14px; right:14px; z-index:20; width:44px; height:44px; padding:0; margin:0; border-radius:50%; font-size:22px; box-shadow:0 3px 10px rgba(0,0,0,0.16); }
+.settings-modal { display:none; position:fixed; inset:0; z-index:50; background:rgba(0,0,0,0.42); padding:18px; overflow:auto; }
+.settings-modal.open { display:flex; align-items:flex-start; justify-content:center; }
+.settings-dialog { width:min(560px,100%); margin:auto; background:#fff; border-radius:14px; padding:20px; box-shadow:0 12px 35px rgba(0,0,0,0.22); }
+.settings-dialog h2 { margin-top:0; color:#1a237e; }
+.settings-field { margin-bottom:18px; }
+.settings-field label { display:block; font-weight:bold; margin-bottom:6px; }
+.settings-field input[type="text"] { width:100%; box-sizing:border-box; }
+.settings-class-list { margin:10px 0; }
+.settings-class-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; padding:8px; background:#f5f7fb; border-radius:8px; }
+.drag-handle { flex:0 0 auto; cursor:grab; user-select:none; touch-action:none; font-size:21px; line-height:1; padding:6px; color:#546e7a; }
+.drag-handle:active { cursor:grabbing; }
+.settings-class-row.dragging { opacity:0.45; }
+.settings-class-row input { flex:1; width:auto; min-width:0; }
+.settings-class-row .delete-class { width:auto; margin:0; padding:7px 10px; background:#e53935; }
+.settings-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+.settings-actions button { margin:0; }
+.secondary-button { background:#607d8b; }
+.secondary-button:hover { background:#455a64; }
+.danger-button { background:#e53935; }
+.danger-button:hover { background:#c62828; }
 @media (min-width:500px) { .class-row label { width:180px;} button { width:auto; margin-right:10px;} }
 </style>
 </head>
 <body>
 
+<button class="settings-button" type="button" onclick="openSettings()" aria-label="Paramètres" title="Paramètres">⚙️</button>
+
+<div id="schoolNameDisplay" class="school-name"></div>
 <h1>Répartition des études</h1>
 <div id="date"></div>
 
@@ -53,9 +78,12 @@ updateDate();
     <label><strong>Nombre d'études :</strong>
         <select id="studies" onchange="refreshStudySelectors()">
             <option value="1">1</option>
-    <option value="2">2</option>
-    <option value="3">3</option>
-    <option value="4" selected>4</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4" selected>4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
         </select>
     </label>
 
@@ -69,27 +97,115 @@ updateDate();
 
 <div id="result" class="result"></div>
 
-<script>
-const classNames = [
-    "CPA","CPB","CPC","CE1A","CE1B","CE1/CM1",
-    "CE2A","CE2B","CE2C","CM1A","CM1B","CM2A","CM2B"
-];
+<div id="settingsModal" class="settings-modal" onclick="closeSettingsOnBackdrop(event)">
+    <div class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <h2 id="settingsTitle">⚙️ Paramètres</h2>
 
-const classesDiv = document.getElementById("classes");
-classNames.forEach((name,i)=>{
-    classesDiv.innerHTML += `
-    <div class="class-row">
-        <label>${name}</label>
-        <input type="number" id="class${i}" min="0" value="0">
-        <select id="force${i}">
-            <option value="auto">Auto</option>
-            <option value="1">Étude 1</option>
-            <option value="2">Étude 2</option>
-            <option value="3">Étude 3</option>
-            <option value="4">Étude 4</option>
-        </select>
-    </div>`;
-});
+        <div class="settings-field">
+            <label for="settingsSchoolName">Nom de l'école</label>
+            <input type="text" id="settingsSchoolName" placeholder="Ex. École Brossolette">
+        </div>
+
+        <div class="settings-field">
+            <label>Classes</label>
+            <div id="settingsClassList" class="settings-class-list"></div>
+            <button type="button" class="secondary-button" onclick="addSettingsClass()">+ Ajouter une classe</button>
+        </div>
+
+        <div class="settings-actions">
+            <button type="button" class="secondary-button" onclick="document.getElementById('configImportInput').click()">Importer</button>
+            <button type="button" class="secondary-button" onclick="exportConfig()">Exporter</button>
+            <button type="button" class="danger-button" onclick="resetConfig()">Réinitialiser</button>
+        </div>
+
+        <div class="settings-actions">
+            <button type="button" onclick="saveSettings()">Enregistrer</button>
+            <button type="button" class="secondary-button" onclick="closeSettings()">Annuler</button>
+        </div>
+
+        <input id="configImportInput" type="file" accept="application/json,.json" hidden onchange="importConfig(event)">
+    </div>
+</div>
+
+<script>
+const DEFAULT_CONFIG = {
+    schoolName: "[Nom de l'école]",
+    classes: [
+        "CPA","CPB","CE1A","CE1B","CE1/CE2","CE2A",
+        "CE2B","CM1A","CM1B","CM1/CM2","CM2A","CM2B"
+    ]
+};
+const CONFIG_STORAGE_KEY = "repartitionEtudesConfig";
+
+function loadConfig() {
+    try {
+        const stored = JSON.parse(localStorage.getItem(CONFIG_STORAGE_KEY));
+        if (stored && Array.isArray(stored.classes) && stored.classes.length > 0) {
+            return {
+                schoolName: typeof stored.schoolName === "string" ? stored.schoolName : "",
+                classes: stored.classes.filter(name => typeof name === "string" && name.trim()).map(name => name.trim())
+            };
+        }
+    } catch (err) {
+        console.warn("Configuration locale invalide, utilisation des valeurs par défaut.", err);
+    }
+    return { schoolName: DEFAULT_CONFIG.schoolName, classes: [...DEFAULT_CONFIG.classes] };
+}
+
+let appConfig = loadConfig();
+let classNames = [...appConfig.classes];
+
+function updateSchoolNameDisplay() {
+    const el = document.getElementById("schoolNameDisplay");
+    el.textContent = appConfig.schoolName;
+    el.style.display = appConfig.schoolName ? "block" : "none";
+}
+
+function getCurrentClassInputs() {
+    const values = {};
+    classNames.forEach((name, i) => {
+        const size = document.getElementById("class" + i);
+        const forced = document.getElementById("force" + i);
+        if (size && forced) values[name] = { size: size.value, forced: forced.value };
+    });
+    return values;
+}
+
+function renderClasses(previousValues = {}) {
+    const classesDiv = document.getElementById("classes");
+    classesDiv.innerHTML = classNames.map((name,i)=>{
+        const previous = previousValues[name] || { size: "0", forced: "auto" };
+        return `
+        <div class="class-row">
+            <label>${escapeHtml(name)}</label>
+            <input type="number" id="class${i}" min="0" value="${escapeHtml(previous.size)}">
+            <select id="force${i}">
+                <option value="auto">Auto</option>
+                <option value="1">Étude 1</option>
+                <option value="2">Étude 2</option>
+                <option value="3">Étude 3</option>
+                <option value="4">Étude 4</option>
+            </select>
+        </div>`;
+    }).join("");
+    classNames.forEach((name, i) => {
+        const previous = previousValues[name];
+        if (previous) document.getElementById("force" + i).value = previous.forced;
+    });
+    refreshStudySelectors();
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
+updateSchoolNameDisplay();
+renderClasses();
 
 function refreshStudySelectors() {
     const studyCount = parseInt(document.getElementById("studies").value);
@@ -116,8 +232,20 @@ function compute(){
           classSizes.push({name,size,forced}); totalEleves+=size;
       });
 
-      const order=["CPA","CPB","CPC","CE1A","CE1B","CE1/CM1","CE2A","CE2B","CE2C","CM1A","CM1B","CM2A","CM2B"];
-      const grades=name=>{ const g=[]; if(name.startsWith("CP"))g.push("CP"); if(name.includes("CE1"))g.push("CE1"); if(name.includes("CE2"))g.push("CE2"); if(name.includes("CM1"))g.push("CM1"); if(name.includes("CM2"))g.push("CM2"); return g; };
+      const order=classNames;
+      const grades=name=>{
+        const n=name.toUpperCase().replace(/\s/g,"");
+        if(n.includes("CP") && n.includes("CE1")) return ["CP"];
+        if(n.includes("CE1") && n.includes("CE2")) return ["CE1"];
+        if(n.includes("CE2") && n.includes("CM1")) return ["CE2"];
+        if(n.includes("CM1") && n.includes("CM2")) return ["CM1"];
+        if(n.startsWith("CP")) return ["CP"];
+        if(n.includes("CE1")) return ["CE1"];
+        if(n.includes("CE2")) return ["CE2"];
+        if(n.includes("CM1")) return ["CM1"];
+        if(n.includes("CM2")) return ["CM2"];
+        return [];
+      };
       const active=classSizes.map((c,i)=>({...c,index:i})).filter(c=>c.size>0);
       const forcedMasks=Array(studyCount).fill(0), free=[];
       active.forEach(c=>{ if(c.forced!=="auto"){ const s=parseInt(c.forced)-1; if(s>=0&&s<studyCount) forcedMasks[s]|=1<<c.index; } else free.push(c); });
@@ -180,6 +308,12 @@ function compute(){
     doc.setFontSize(18);
     doc.text("Répartition des études",10,y); y+=10;
 
+    if (appConfig.schoolName) {
+        doc.setFontSize(13);
+        doc.setFont("helvetica","bold");
+        doc.text(appConfig.schoolName,10,y); y+=8;
+    }
+
     doc.setFontSize(12);
     doc.setFont("helvetica","bold");
     doc.text(`Date : ${lastDateText}`,10,y); y+=7;
@@ -188,8 +322,7 @@ function compute(){
     doc.text(`Total élèves : ${lastTotal}`,10,y); y+=7;
     doc.text(`Moyenne par étude : ${lastMoyenne.toFixed(1)}`,10,y); y+=10;
 
-    const order = ["CPA","CPB","CP/CE2","CE1A","CE1B","CE1/CM1","CE1/CM2",
-                   "CE2A","CE2B","CM1A","CM1B","CM2A","CM2B"];
+    const order = classNames;
 
     lastStudies.filter(study=>study.total>0).forEach((study,i)=>{
         doc.setFontSize(14); doc.text(`Étude ${i+1} — ${study.total} élèves`,10,y); y+=7;
@@ -203,6 +336,173 @@ function compute(){
     });
 
     doc.save("repartition_etudes.pdf");
+}
+
+
+
+function openSettings() {
+    document.getElementById("settingsSchoolName").value = appConfig.schoolName;
+    renderSettingsClassList(classNames);
+    document.getElementById("settingsModal").classList.add("open");
+}
+
+function closeSettings() {
+    document.getElementById("settingsModal").classList.remove("open");
+    document.getElementById("configImportInput").value = "";
+}
+
+function closeSettingsOnBackdrop(event) {
+    if (event.target.id === "settingsModal") closeSettings();
+}
+
+function renderSettingsClassList(names) {
+    const list = document.getElementById("settingsClassList");
+    list.innerHTML = "";
+    names.forEach(name => list.appendChild(createSettingsClassRow(name)));
+}
+
+function createSettingsClassRow(name = "") {
+    const row = document.createElement("div");
+    row.className = "settings-class-row";
+    row.innerHTML = `
+        <span class="drag-handle" title="Déplacer" aria-label="Déplacer">☰</span>
+        <input type="text" class="settings-class-name" value="${escapeHtml(name)}" aria-label="Nom de la classe">
+        <button type="button" class="delete-class" aria-label="Supprimer la classe">✕</button>`;
+
+    row.querySelector(".delete-class").addEventListener("click", () => row.remove());
+    attachDragHandlers(row);
+    return row;
+}
+
+function addSettingsClass() {
+    const list = document.getElementById("settingsClassList");
+    const row = createSettingsClassRow("");
+    list.appendChild(row);
+    row.querySelector("input").focus();
+}
+
+let draggedSettingsRow = null;
+let pointerDraggedRow = null;
+let pointerId = null;
+
+function attachDragHandlers(row) {
+    const handle = row.querySelector(".drag-handle");
+    handle.draggable = true;
+    handle.addEventListener("dragstart", event => {
+        draggedSettingsRow = row;
+        row.classList.add("dragging");
+        event.dataTransfer.effectAllowed = "move";
+    });
+    handle.addEventListener("dragend", () => {
+        row.classList.remove("dragging");
+        draggedSettingsRow = null;
+    });
+    row.addEventListener("dragover", event => {
+        event.preventDefault();
+        if (!draggedSettingsRow || draggedSettingsRow === row) return;
+        const rect = row.getBoundingClientRect();
+        const before = event.clientY < rect.top + rect.height / 2;
+        row.parentNode.insertBefore(draggedSettingsRow, before ? row : row.nextSibling);
+    });
+
+    handle.addEventListener("pointerdown", event => {
+        if (event.pointerType === "mouse") return;
+        pointerDraggedRow = row;
+        pointerId = event.pointerId;
+        row.classList.add("dragging");
+        handle.setPointerCapture(pointerId);
+        event.preventDefault();
+    });
+    handle.addEventListener("pointermove", event => {
+        if (!pointerDraggedRow || event.pointerId !== pointerId) return;
+        const target = document.elementFromPoint(event.clientX, event.clientY)?.closest(".settings-class-row");
+        if (!target || target === pointerDraggedRow || target.parentNode !== pointerDraggedRow.parentNode) return;
+        const rect = target.getBoundingClientRect();
+        const before = event.clientY < rect.top + rect.height / 2;
+        target.parentNode.insertBefore(pointerDraggedRow, before ? target : target.nextSibling);
+        event.preventDefault();
+    });
+    const stopPointerDrag = event => {
+        if (!pointerDraggedRow || event.pointerId !== pointerId) return;
+        pointerDraggedRow.classList.remove("dragging");
+        pointerDraggedRow = null;
+        pointerId = null;
+    };
+    handle.addEventListener("pointerup", stopPointerDrag);
+    handle.addEventListener("pointercancel", stopPointerDrag);
+}
+
+function getSettingsConfig() {
+    const schoolName = document.getElementById("settingsSchoolName").value.trim();
+    const classes = [...document.querySelectorAll(".settings-class-name")].map(input => input.value.trim()).filter(Boolean);
+    if (classes.length === 0) throw new Error("Ajoutez au moins une classe.");
+    if (new Set(classes).size !== classes.length) throw new Error("Deux classes ne peuvent pas avoir le même nom.");
+    return { schoolName, classes };
+}
+
+function applyConfig(config) {
+    const previousValues = getCurrentClassInputs();
+    appConfig = { schoolName: config.schoolName || "", classes: [...config.classes] };
+    classNames = [...appConfig.classes];
+    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(appConfig));
+    updateSchoolNameDisplay();
+    renderClasses(previousValues);
+    document.getElementById("result").innerHTML = "";
+}
+
+function saveSettings() {
+    try {
+        applyConfig(getSettingsConfig());
+        closeSettings();
+    } catch (err) {
+        alert(err.message);
+    }
+}
+
+function resetConfig() {
+    if (!confirm("Réinitialiser le nom de l'école et les classes avec la configuration par défaut ?")) return;
+    document.getElementById("settingsSchoolName").value = DEFAULT_CONFIG.schoolName;
+    renderSettingsClassList(DEFAULT_CONFIG.classes);
+}
+
+function exportConfig() {
+    let config;
+    try {
+        config = getSettingsConfig();
+    } catch (err) {
+        alert(err.message);
+        return;
+    }
+    const blob = new Blob([JSON.stringify(config, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "configuration-etudes.json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+}
+
+function importConfig(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+        try {
+            const imported = JSON.parse(reader.result);
+            if (!imported || !Array.isArray(imported.classes)) throw new Error();
+            const classes = imported.classes.map(name => typeof name === "string" ? name.trim() : "").filter(Boolean);
+            if (classes.length === 0 || new Set(classes).size !== classes.length) throw new Error();
+            document.getElementById("settingsSchoolName").value = typeof imported.schoolName === "string" ? imported.schoolName : "";
+            renderSettingsClassList(classes);
+        } catch (err) {
+            alert("Le fichier de configuration est invalide.");
+        } finally {
+            event.target.value = "";
+        }
+    };
+    reader.readAsText(file);
 }
 
 // Enregistrement service worker

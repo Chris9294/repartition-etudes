@@ -62,7 +62,7 @@ button:hover { background:#1565c0; }
 <button class="settings-button" type="button" onclick="openSettings()" aria-label="Paramètres" title="Paramètres">⚙️</button>
 
 <div id="schoolNameDisplay" class="school-name"></div>
-<h1>Répartition des études *</h1>
+<h1>Répartition des études</h1>
 <div id="date"></div>
 
 <script>
@@ -179,12 +179,15 @@ function placeCursorAtEnd(input) {
 
 function renderClasses(previousValues = {}) {
     const classesDiv = document.getElementById("classes");
+    const isTouchDevice = window.matchMedia("(pointer: coarse)").matches;
     classesDiv.innerHTML = classNames.map((name,i)=>{
         const previous = previousValues[name] || { size: "0", forced: "auto" };
         return `
         <div class="class-row">
             <label>${escapeHtml(name)}</label>
-            <input type="text" inputmode="numeric" pattern="[0-9]*" id="class${i}" value="${escapeHtml(previous.size)}" oninput="this.value=this.value.replace(/[^0-9]/g, '')" onfocus="placeCursorAtEnd(this)" onclick="placeCursorAtEnd(this)">
+            ${isTouchDevice
+                ? `<input type="text" inputmode="numeric" pattern="[0-9]*" id="class${i}" value="${escapeHtml(previous.size)}" oninput="this.value=this.value.replace(/[^0-9]/g, '')" onfocus="placeCursorAtEnd(this)" onclick="placeCursorAtEnd(this)">`
+                : `<input type="number" id="class${i}" min="0" value="${escapeHtml(previous.size)}">`}
             <select id="force${i}">
                 <option value="auto">Auto</option>
                 <option value="1">Étude 1</option>

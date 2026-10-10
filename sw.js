@@ -1,4 +1,4 @@
-const CACHE_NAME = "repartition-cache-v7";
+const CACHE_NAME = "repartition-cache-v8";
 const urlsToCache = ["./","./index.html","./manifest.json","./sw.js"];
 
 self.addEventListener("install", event => {

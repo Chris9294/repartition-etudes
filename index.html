@@ -240,29 +240,60 @@ function compute(){
       active.forEach(c=>{ if(c.forced!=="auto"){ const s=parseInt(c.forced)-1; if(s>=0&&s<studyCount) forcedMasks[s]|=1<<c.index; } else free.push(c); });
 
       // Optimisation globale par programmation dynamique.
-      // Priorité 1 : minimiser les doublons de niveau.
-      // Priorité 2 : minimiser la dispersion des effectifs.
+      // Priorité 1 : éviter les doublons entre classes à niveau simple.
+      // Priorité 2 : conserver des effectifs proches (tolérance d'environ 1 à 2 élèves).
+      // Priorité 3 : répartir les grands et les trois groupes d'autonomie.
       const n=free.length, N=1<<n, fullN=1<<classNames.length;
-      const expand=new Array(N).fill(0), totalFree=new Array(N).fill(0);
-      for(let m=1;m<N;m++){ const b=m&-m, j=Math.log2(b), prev=m^b; expand[m]=expand[prev]|(1<<free[j].index); totalFree[m]=totalFree[prev]+free[j].size; }
+      const expand=new Array(N).fill(0);
+      for(let m=1;m<N;m++){ const b=m&-m, j=Math.log2(b), prev=m^b; expand[m]=expand[prev]|(1<<free[j].index); }
       const totals=new Array(fullN).fill(0), dup=new Array(fullN).fill(0);
       const gradeCounts=Array.from({length:fullN},()=>[0,0,0,0,0]);
+      const autonomyCounts=Array.from({length:fullN},()=>[0,0,0]);
+      const cmCounts=new Array(fullN).fill(0);
       const gb={CP:0,CE1:1,CE2:2,CM1:3,CM2:4};
+      const gradesByClass=classNames.map(grades);
+      const groupTotals=[0,0,0]; let cmTotal=0;
+      active.forEach(c=>{
+          const levels=gradesByClass[c.index];
+          const group=levels.length ? gb[levels[0]]===0 ? 0 : gb[levels[0]]<=2 ? 1 : 2 : 1;
+          groupTotals[group]++;
+          if(levels.length===1 && gb[levels[0]]>=3) cmTotal++;
+      });
       for(let m=1;m<fullN;m++){
-          const b=m&-m, i=Math.log2(b), prev=m^b;
+          const b=m&-m, i=Math.log2(b), prev=m^b, levels=gradesByClass[i];
           totals[m]=totals[prev]+classSizes[i].size;
           gradeCounts[m]=gradeCounts[prev].slice();
-          grades(classNames[i]).forEach(g=>gradeCounts[m][gb[g]]++);
+          autonomyCounts[m]=autonomyCounts[prev].slice();
+          cmCounts[m]=cmCounts[prev];
+          if(classSizes[i].size>0){
+              if(levels.length===1){
+                  const level=gb[levels[0]];
+                  gradeCounts[m][level]++;
+                  if(level>=3)cmCounts[m]++;
+              }
+              const group=levels.length ? gb[levels[0]]===0 ? 0 : gb[levels[0]]<=2 ? 1 : 2 : 1;
+              autonomyCounts[m][group]++;
+          }
           dup[m]=gradeCounts[m].reduce((sum,c)=>sum+Math.max(0,c-1),0);
       }
-      const better=(a,b)=>!b||a.d<b.d||(a.d===b.d&&a.q<b.q);
-      let dp=new Array(N).fill(null); dp[0]={d:0,q:0}; const parents=[];
+      const moyenneCible=totalEleves/studyCount;
+      const educationalCost=mask=>{
+          const cmGap=cmCounts[mask]*studyCount-cmTotal;
+          return 8*cmGap*cmGap+autonomyCounts[mask].reduce((sum,count,g)=>{
+              const gap=count*studyCount-groupTotals[g];
+              return sum+2*gap*gap;
+          },0);
+      };
+      const excessCost=mask=>Math.pow(Math.max(0,Math.abs(totals[mask]-moyenneCible)-1.25),2);
+      const better=(a,b)=>!b||a.d<b.d||(a.d===b.d&&(a.e<b.e||(a.e===b.e&&(a.p<b.p||(a.p===b.p&&a.q<b.q)))));
+      let dp=new Array(N).fill(null); dp[0]={d:0,e:0,p:0,q:0}; const parents=[];
       for(let s=0;s<studyCount;s++){
           const next=new Array(N).fill(null), parent=new Array(N).fill(null);
           for(let assigned=0;assigned<N;assigned++) if(dp[assigned]){
               const remaining=(N-1)^assigned;
               for(let sub=remaining;;sub=(sub-1)&remaining){
-                  const mask=forcedMasks[s]|expand[sub], cand={d:dp[assigned].d+dup[mask],q:dp[assigned].q+totals[mask]*totals[mask]}, dest=assigned|sub;
+                  const mask=forcedMasks[s]|expand[sub], dest=assigned|sub;
+                  const cand={d:dp[assigned].d+dup[mask],e:dp[assigned].e+excessCost(mask),p:dp[assigned].p+educationalCost(mask),q:dp[assigned].q+totals[mask]*totals[mask]};
                   if(better(cand,next[dest])){next[dest]=cand;parent[dest]={prev:assigned,sub};}
                   if(sub===0)break;
               }

@@ -43,7 +43,7 @@ button:hover { background:#1565c0; }
 .settings-field input[type="text"] { width:100%; box-sizing:border-box; }
 .settings-class-list { margin:10px 0; }
 .settings-class-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; padding:8px; background:#f5f7fb; border-radius:8px; }
-.drag-handle { flex:0 0 auto; cursor:grab; user-select:none; touch-action:none; font-size:21px; line-height:1; padding:6px; color:#546e7a; }
+.drag-handle { flex:0 0 auto; cursor:grab; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; touch-action:none; font-size:21px; line-height:1; padding:6px; color:#546e7a; }
 .drag-handle:active { cursor:grabbing; }
 .settings-class-row.dragging { opacity:0.45; }
 .settings-class-row input { flex:1; width:auto; min-width:0; }
@@ -172,6 +172,11 @@ function getCurrentClassInputs() {
     return values;
 }
 
+function placeCursorAtEnd(input) {
+    const end = input.value.length;
+    input.setSelectionRange(end, end);
+}
+
 function renderClasses(previousValues = {}) {
     const classesDiv = document.getElementById("classes");
     classesDiv.innerHTML = classNames.map((name,i)=>{
@@ -179,7 +184,7 @@ function renderClasses(previousValues = {}) {
         return `
         <div class="class-row">
             <label>${escapeHtml(name)}</label>
-            <input type="number" id="class${i}" min="0" value="${escapeHtml(previous.size)}">
+            <input type="text" inputmode="numeric" pattern="[0-9]*" id="class${i}" value="${escapeHtml(previous.size)}" oninput="this.value=this.value.replace(/[^0-9]/g, '')" onfocus="placeCursorAtEnd(this)" onclick="placeCursorAtEnd(this)">
             <select id="force${i}">
                 <option value="auto">Auto</option>
                 <option value="1">Étude 1</option>
@@ -414,6 +419,8 @@ let pointerId = null;
 function attachDragHandlers(row) {
     const handle = row.querySelector(".drag-handle");
     handle.draggable = true;
+    handle.addEventListener("contextmenu", event => event.preventDefault());
+    handle.addEventListener("selectstart", event => event.preventDefault());
     handle.addEventListener("dragstart", event => {
         draggedSettingsRow = row;
         row.classList.add("dragging");

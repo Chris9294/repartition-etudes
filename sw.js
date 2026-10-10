@@ -1,4 +1,4 @@
-const CACHE_NAME = "repartition-cache-v11";
+const CACHE_NAME = "repartition-cache-v12";
 const urlsToCache = ["./","./index.html","./manifest.json","./sw.js"];
 
 self.addEventListener("install", event => {
@@ -18,6 +18,19 @@ self.addEventListener("activate", event => {
 });
 
 self.addEventListener("fetch", event => {
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      fetch(event.request).then(response => {
+        if (response.ok) {
+          const copy = response.clone();
+          event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.put(event.request, copy)));
+        }
+        return response;
+      }).catch(() => caches.match(event.request).then(response => response || caches.match("./index.html")))
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(event.request).then(response => response || fetch(event.request))
   );

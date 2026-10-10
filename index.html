@@ -250,6 +250,7 @@ function compute(){
       const gradeCounts=Array.from({length:fullN},()=>[0,0,0,0,0]);
       const autonomyCounts=Array.from({length:fullN},()=>[0,0,0]);
       const cmCounts=new Array(fullN).fill(0);
+      const cpCounts=new Array(fullN).fill(0), ce1PureCounts=new Array(fullN).fill(0);
       const gb={CP:0,CE1:1,CE2:2,CM1:3,CM2:4};
       const gradesByClass=classNames.map(grades);
       const groupTotals=[0,0,0]; let cmTotal=0;
@@ -265,7 +266,11 @@ function compute(){
           gradeCounts[m]=gradeCounts[prev].slice();
           autonomyCounts[m]=autonomyCounts[prev].slice();
           cmCounts[m]=cmCounts[prev];
+          cpCounts[m]=cpCounts[prev];
+          ce1PureCounts[m]=ce1PureCounts[prev];
           if(classSizes[i].size>0){
+              if(levels[0]==="CP")cpCounts[m]++;
+              if(levels.length===1 && levels[0]==="CE1")ce1PureCounts[m]++;
               if(levels.length===1){
                   const level=gb[levels[0]];
                   gradeCounts[m][level]++;
@@ -284,16 +289,17 @@ function compute(){
               return sum+2*gap*gap;
           },0);
       };
+      const coverageCost=mask=>cpCounts[mask]===0 && ce1PureCounts[mask]===0 ? 1 : 0;
       const excessCost=mask=>Math.pow(Math.max(0,Math.abs(totals[mask]-moyenneCible)-1.25),2);
-      const better=(a,b)=>!b||a.d<b.d||(a.d===b.d&&(a.e<b.e||(a.e===b.e&&(a.p<b.p||(a.p===b.p&&a.q<b.q)))));
-      let dp=new Array(N).fill(null); dp[0]={d:0,e:0,p:0,q:0}; const parents=[];
+      const better=(a,b)=>!b||a.d<b.d||(a.d===b.d&&(a.e<b.e||(a.e===b.e&&(a.c<b.c||(a.c===b.c&&(a.p<b.p||(a.p===b.p&&a.q<b.q)))))));
+      let dp=new Array(N).fill(null); dp[0]={d:0,e:0,c:0,p:0,q:0}; const parents=[];
       for(let s=0;s<studyCount;s++){
           const next=new Array(N).fill(null), parent=new Array(N).fill(null);
           for(let assigned=0;assigned<N;assigned++) if(dp[assigned]){
               const remaining=(N-1)^assigned;
               for(let sub=remaining;;sub=(sub-1)&remaining){
                   const mask=forcedMasks[s]|expand[sub], dest=assigned|sub;
-                  const cand={d:dp[assigned].d+dup[mask],e:dp[assigned].e+excessCost(mask),p:dp[assigned].p+educationalCost(mask),q:dp[assigned].q+totals[mask]*totals[mask]};
+                  const cand={d:dp[assigned].d+dup[mask],e:dp[assigned].e+excessCost(mask),c:dp[assigned].c+coverageCost(mask),p:dp[assigned].p+educationalCost(mask),q:dp[assigned].q+totals[mask]*totals[mask]};
                   if(better(cand,next[dest])){next[dest]=cand;parent[dest]={prev:assigned,sub};}
                   if(sub===0)break;
               }
